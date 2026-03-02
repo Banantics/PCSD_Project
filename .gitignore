@@ -1,0 +1,47 @@
+# Non-code documents
+*.pdf
+*.txt
+*.doc
+*.docx
+*.rtf
+*.odt
+*.pages
+
+# Spreadsheets and presentations
+*.xls
+*.xlsx
+*.csv
+*.tsv
+*.ppt
+*.pptx
+*.odp
+
+# Images and media exports
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tif
+*.tiff
+*.svg
+*.mp3
+*.wav
+*.mp4
+*.mov
+*.avi
+*.mkv
+
+# Archives and packaged files
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+*.bz2
+
+# Common generated binaries/data dumps
+*.bin
+*.hex
+*.log
+*.tmp
