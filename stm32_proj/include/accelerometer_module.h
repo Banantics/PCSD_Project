@@ -15,10 +15,25 @@ typedef struct
     int16_t z_mg;
 } AccelerometerSampleMg;
 
-bool AccelerometerModule_Init(void);
-bool AccelerometerModule_Read(AccelerometerSampleMg *sample);
-void AccelerometerModule_Print(UART_HandleTypeDef *huart, const AccelerometerSampleMg *sample);
-void AccelerometerModule_ReadAndPrint(UART_HandleTypeDef *huart);
+typedef enum
+{
+    ACCEL_OK = 0,
+    ACCEL_ERR_NOT_INIT,
+    ACCEL_ERR_INIT_FAILED,
+    ACCEL_ERR_READ_FAILED
+} AccelerometerStatus;
+
+// Initializes the accelerometer hardware and driver state.
+AccelerometerStatus Accelerometer_Init(void);
+
+// Returns true when the accelerometer is ready to be read.
+bool Accelerometer_IsReady(void);
+
+// Reads one accelerometer sample in milligravity units.
+AccelerometerStatus Accelerometer_ReadMg(AccelerometerSampleMg *sample);
+
+// Converts a status code into a readable string.
+const char* Accelerometer_StatusString(AccelerometerStatus status);
 
 #ifdef __cplusplus
 }
