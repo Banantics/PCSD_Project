@@ -4,238 +4,210 @@
 % Group 1 - Bogdan Ghetu
 %
 % HOW TO USE:
-%   1. Connect STM32 Nucleo-144 via USB (ST-Link)
-%   2. Make sure the correct COM port is set below (default: COM3)
-%   3. Press Run (or type 'predictive_maintenance' in the Command Window)
-%   4. Follow the on-screen prompts:
-%        - Press ENTER to start baseline calibration
-%        - Press ENTER again to start monitoring
-%        - Close the figure window to stop
+%   1. Plug in STM32 via USB
+%   2. Press Run in MATLAB
+%   3. Click the Command Window and press ENTER to start
+%   4. System records baseline for 10 seconds automatically, then monitors
 % =========================================================================
 
 clc; clear; close all;
 
 % -------------------------------------------------------------------------
-% CONFIGURATION  <-- edit these if needed
+% CONFIGURATION
 % -------------------------------------------------------------------------
-COM_PORT     = 'COM5';      % Serial port of the STM32 ST-Link
-BAUD_RATE    = 115200;      % Must match STM32 firmware
-SAMPLE_RATE  = 1000;        % Hz - accelerometer sample rate
-BLOCK_SIZE   = 1024;        % Samples per FFT block (must match firmware)
-THRESHOLD    = 50;          % Euclidean distance alarm threshold (tune in Q4)
-BYTES_PER_SAMPLE = 2;       % STM32 sends int16 (2 bytes per sample)
+COM_PORT         = 'COM5';    % Change to match your port
+BAUD_RATE        = 115200;
+SAMPLE_RATE      = 500;       % Hz (approx, based on ~2ms between samples)
+BLOCK_SIZE       = 512;       % Samples per FFT block
+THRESHOLD        = 50;        % Euclidean distance alarm threshold (tune later)
+AXIS             = 'Z';       % 'X', 'Y', or 'Z'
+CALIB_SECONDS    = 10;        % How long to record baseline (seconds)
 
 % -------------------------------------------------------------------------
 % SERIAL PORT SETUP
 % -------------------------------------------------------------------------
 fprintf('=== PSCD Predictive Maintenance System ===\n');
 fprintf('Connecting to STM32 on %s at %d baud...\n', COM_PORT, BAUD_RATE);
-
 s = serialport(COM_PORT, BAUD_RATE);
-configureTerminator(s, "LF");   % Line-feed terminated (adjust if firmware differs)
+configureTerminator(s, "LF");
 flush(s);
-fprintf('Connected.\n\n');
-
-% Clean up serial port automatically when script exits or errors
+fprintf('Connected successfully.\n\n');
 cleanupObj = onCleanup(@() delete(s));
 
 % -------------------------------------------------------------------------
-% FIGURE SETUP
+% FIGURE
 % -------------------------------------------------------------------------
-fig = figure('Name', 'PSCD Predictive Maintenance', ...
-             'NumberTitle', 'off', ...
-             'Position', [100 100 1100 700]);
-
-% --- Time domain plot ---
-ax1 = subplot(2,2,1);
-hTime = plot(ax1, zeros(1, BLOCK_SIZE), 'b-', 'LineWidth', 1);
-title(ax1, 'Raw Vibration Signal');
-xlabel(ax1, 'Sample');
-ylabel(ax1, 'Amplitude (raw)');
-grid(ax1, 'on');
-ylim(ax1, [-2^15, 2^15]);   % int16 range
-
-% --- Live FFT plot ---
+fig = figure('Name','PSCD Predictive Maintenance','NumberTitle','off',...
+             'Position',[100 100 1100 700]);
 freqAxis = (0:BLOCK_SIZE/2) * (SAMPLE_RATE / BLOCK_SIZE);
-ax2 = subplot(2,2,2);
-hFFT    = plot(ax2, freqAxis, zeros(1, BLOCK_SIZE/2+1), 'b-', 'LineWidth', 1);
-hold(ax2, 'on');
-hBase   = plot(ax2, freqAxis, zeros(1, BLOCK_SIZE/2+1), 'r--', 'LineWidth', 1.5);
-hold(ax2, 'off');
-legend(ax2, 'Live FFT', 'Baseline');
-title(ax2, 'FFT Spectrum');
-xlabel(ax2, 'Frequency (Hz)');
-ylabel(ax2, 'Magnitude');
-grid(ax2, 'on');
 
-% --- Euclidean distance history ---
+ax1 = subplot(2,2,1);
+hTime = plot(ax1, zeros(1,BLOCK_SIZE), 'b-', 'LineWidth', 1);
+title(ax1, sprintf('Raw Vibration - %s axis', AXIS));
+xlabel(ax1,'Sample'); ylabel(ax1,'Acceleration (raw)'); grid(ax1,'on');
+
+ax2 = subplot(2,2,2);
+hFFT  = plot(ax2, freqAxis, zeros(1,BLOCK_SIZE/2+1), 'b-', 'LineWidth', 1);
+hold(ax2,'on');
+hBase = plot(ax2, freqAxis, zeros(1,BLOCK_SIZE/2+1), 'r--', 'LineWidth', 1.5);
+hold(ax2,'off');
+legend(ax2,'Live FFT','Baseline');
+title(ax2,'FFT Spectrum');
+xlabel(ax2,'Frequency (Hz)'); ylabel(ax2,'Magnitude'); grid(ax2,'on');
+set(ax2, 'YLimMode', 'auto', 'XLimMode', 'auto');
+
 ax3 = subplot(2,2,3);
 hDist = plot(ax3, NaN, NaN, 'k-', 'LineWidth', 1.2);
-hold(ax3, 'on');
-hThreshLine = yline(ax3, THRESHOLD, 'r--', 'LineWidth', 1.5, ...
-                    'Label', sprintf('Threshold = %g', THRESHOLD));
-hold(ax3, 'off');
-title(ax3, 'Euclidean Distance to Baseline');
-xlabel(ax3, 'Block #');
-ylabel(ax3, 'Distance');
-grid(ax3, 'on');
-ylim(ax3, [0, THRESHOLD * 3]);
+hold(ax3,'on');
+yline(ax3, THRESHOLD, 'r--', 'LineWidth', 1.5, ...
+      'Label', sprintf('Threshold = %g', THRESHOLD));
+hold(ax3,'off');
+title(ax3,'Euclidean Distance to Baseline');
+xlabel(ax3,'Block #'); ylabel(ax3,'Distance'); grid(ax3,'on');
+set(ax3, 'YLimMode', 'auto', 'XLimMode', 'auto');
 
-% --- Status panel ---
 ax4 = subplot(2,2,4);
-axis(ax4, 'off');
-hStatus = text(ax4, 0.5, 0.5, 'STATE: IDLE', ...
-    'FontSize', 22, 'FontWeight', 'bold', ...
-    'HorizontalAlignment', 'center', ...
-    'VerticalAlignment', 'middle', ...
-    'Color', [0.4 0.4 0.4]);
-hDistText = text(ax4, 0.5, 0.25, 'Distance: --', ...
-    'FontSize', 14, ...
-    'HorizontalAlignment', 'center', ...
-    'Color', [0.2 0.2 0.2]);
+axis(ax4,'off');
+hStatus    = text(ax4, 0.5, 0.6, 'STATE: IDLE', 'FontSize', 22, ...
+    'FontWeight','bold','HorizontalAlignment','center','Color',[0.4 0.4 0.4]);
+hDistText  = text(ax4, 0.5, 0.35, 'Distance: --', 'FontSize', 14, ...
+    'HorizontalAlignment','center','Color',[0.2 0.2 0.2]);
+hBlockText = text(ax4, 0.5, 0.15, 'Block: 0', 'FontSize', 12, ...
+    'HorizontalAlignment','center','Color',[0.4 0.4 0.4]);
 
 % -------------------------------------------------------------------------
-% STATE MACHINE INITIALISATION
+% WAIT FOR USER TO PRESS ENTER
 % -------------------------------------------------------------------------
-% States: 1=IDLE, 2=CALIBRATION, 3=MONITORING, 4=ALARM
-state         = 1;
-baseline      = [];
-distHistory   = [];
-blockCount    = 0;
-
-updateStatus(hStatus, state);
-
-% -------------------------------------------------------------------------
-% MAIN LOOP
-% -------------------------------------------------------------------------
-fprintf('Press ENTER in this window to begin baseline calibration...\n');
+fprintf('Press ENTER in this window to begin %d-second baseline calibration...\n', CALIB_SECONDS);
 pause();
 
-state = 2;  % -> CALIBRATION
-updateStatus(hStatus, state);
-fprintf('\n[CALIBRATION] Recording baseline. Press ENTER when ready to switch to monitoring...\n');
-calibrationBlocks = {};
+% -------------------------------------------------------------------------
+% CALIBRATION (timed - runs for CALIB_SECONDS automatically)
+% -------------------------------------------------------------------------
+updateStatus(hStatus, 2);
+fprintf('\n[CALIBRATION] Recording baseline for %d seconds...\n', CALIB_SECONDS);
 
-while ishandle(fig)
+sampleBuffer = [];
+calibBlocks  = {};
+blockCount   = 0;
+calibStart   = tic;
 
-    % --- Read one block of samples from serial port ---
-    rawSamples = readBlock(s, BLOCK_SIZE, BYTES_PER_SAMPLE);
-    if isempty(rawSamples)
-        continue;
+while toc(calibStart) < CALIB_SECONDS && ishandle(fig)
+
+    while s.NumBytesAvailable > 0
+        line = readline(s);
+        vals = str2double(strsplit(strtrim(line), ','));
+        if numel(vals) == 4 && ~any(isnan(vals))
+            switch AXIS
+                case 'X'; sampleBuffer(end+1) = vals(2); %#ok<AGROW>
+                case 'Y'; sampleBuffer(end+1) = vals(3); %#ok<AGROW>
+                case 'Z'; sampleBuffer(end+1) = vals(4); %#ok<AGROW>
+            end
+        end
     end
 
-    blockCount = blockCount + 1;
+    while length(sampleBuffer) >= BLOCK_SIZE
+        block        = sampleBuffer(1:BLOCK_SIZE);
+        sampleBuffer = sampleBuffer(BLOCK_SIZE+1:end);
+        blockCount   = blockCount + 1;
 
-    % --- Compute FFT magnitude (single-sided) ---
-    N       = length(rawSamples);
-    Y       = fft(double(rawSamples));
-    P2      = abs(Y / N);
-    P1      = P2(1:N/2+1);
-    P1(2:end-1) = 2 * P1(2:end-1);   % single-sided scaling
+        Y  = fft(double(block));
+        P2 = abs(Y / BLOCK_SIZE);
+        P1 = P2(1:BLOCK_SIZE/2+1);
+        P1(2:end-1) = 2 * P1(2:end-1);
 
-    % --- Update time domain plot ---
-    set(hTime, 'YData', double(rawSamples));
+        calibBlocks{end+1} = P1; %#ok<AGROW>
+        set(hTime,      'YData', double(block));
+        set(hFFT,       'YData', P1);
+        set(hBlockText, 'String', sprintf('Calib blocks: %d', length(calibBlocks)));
 
-    % --- Update FFT plot ---
-    set(hFFT, 'YData', P1);
-    if ~isempty(baseline)
-        set(hBase, 'YData', baseline);
-    end
-
-    % ---- STATE LOGIC ----
-    switch state
-
-        case 2  % CALIBRATION
-            calibrationBlocks{end+1} = P1; %#ok<AGROW>
-
-            % Check if user pressed ENTER to finish calibration
-            if ~isempty(get(0, 'CurrentFigure')) && ...
-               strcmpi(get(fig, 'CurrentKey'), 'return')
-                % Average all recorded blocks as the baseline
-                baseline = mean(cat(1, calibrationBlocks{:}), 1);
-                set(hBase, 'YData', baseline);
-                state = 3;  % -> MONITORING
-                updateStatus(hStatus, state);
-                fprintf('\n[MONITORING] Baseline stored from %d blocks. Monitoring started.\n', ...
-                        length(calibrationBlocks));
-                set(fig, 'CurrentKey', '');  % reset key
-            end
-
-        case {3, 4}  % MONITORING or ALARM
-
-            if isempty(baseline)
-                continue;
-            end
-
-            % --- Euclidean distance ---
-            d = sqrt(sum((P1 - baseline).^2));
-            distHistory(end+1) = d; %#ok<AGROW>
-
-            % Update distance plot
-            set(hDist, 'XData', 1:length(distHistory), 'YData', distHistory);
-
-            % Update distance text
-            set(hDistText, 'String', sprintf('Distance: %.2f', d));
-
-            % State transitions
-            if d > THRESHOLD
-                state = 4;  % -> ALARM
-            else
-                state = 3;  % -> MONITORING (or back from ALARM)
-            end
-            updateStatus(hStatus, state);
-
-            if state == 4
-                fprintf('[ALARM] Block %d: Euclidean distance = %.2f (threshold = %g)\n', ...
-                        blockCount, d, THRESHOLD);
-                % Send alarm command back to STM32 (LED on)
-                writeline(s, 'ALARM_ON');
-            else
-                % Send clear command to STM32 (LED off)
-                writeline(s, 'ALARM_OFF');
-            end
+        timeLeft = CALIB_SECONDS - toc(calibStart);
+        fprintf('  Block %d recorded (%.1f seconds left)\n', length(calibBlocks), timeLeft);
     end
 
     drawnow limitrate;
-
-    % Check for ENTER key press to transition IDLE -> CALIBRATION
-    % (handled above) or quit
-    if ~ishandle(fig)
-        break;
-    end
+    pause(0.02);
 end
 
-fprintf('\nSession ended. Serial port closed.\n');
-
-% =========================================================================
-% HELPER FUNCTIONS
-% =========================================================================
-
-function samples = readBlock(s, blockSize, bytesPerSample)
-% Read one complete block of int16 samples from the serial port.
-% Returns [] if not enough bytes are available yet.
-    totalBytes = blockSize * bytesPerSample;
-    if s.NumBytesAvailable < totalBytes
-        samples = [];
-        return;
-    end
-    raw     = read(s, totalBytes, 'uint8');
-    % Reassemble int16 from two bytes (little-endian, matching STM32 output)
-    lo      = double(raw(1:2:end));
-    hi      = double(raw(2:2:end));
-    samples = int16(lo + hi * 256);
+if isempty(calibBlocks)
+    error('No data received during calibration. Check STM32 connection and COM port.');
 end
 
+% Lock in baseline
+baseline = mean(cat(1, calibBlocks{:}), 1);
+set(hBase, 'YData', baseline);
+updateStatus(hStatus, 3);
+fprintf('\n[MONITORING] Baseline locked from %d blocks. Anomaly detection running.\n\n', length(calibBlocks));
+
+% -------------------------------------------------------------------------
+% MONITORING LOOP
+% -------------------------------------------------------------------------
+state       = 3;
+distHistory = [];
+
+while ishandle(fig)
+
+    while s.NumBytesAvailable > 0
+        line = readline(s);
+        vals = str2double(strsplit(strtrim(line), ','));
+        if numel(vals) == 4 && ~any(isnan(vals))
+            switch AXIS
+                case 'X'; sampleBuffer(end+1) = vals(2); %#ok<AGROW>
+                case 'Y'; sampleBuffer(end+1) = vals(3); %#ok<AGROW>
+                case 'Z'; sampleBuffer(end+1) = vals(4); %#ok<AGROW>
+            end
+        end
+    end
+
+    while length(sampleBuffer) >= BLOCK_SIZE
+        block        = sampleBuffer(1:BLOCK_SIZE);
+        sampleBuffer = sampleBuffer(BLOCK_SIZE+1:end);
+        blockCount   = blockCount + 1;
+
+        Y  = fft(double(block));
+        P2 = abs(Y / BLOCK_SIZE);
+        P1 = P2(1:BLOCK_SIZE/2+1);
+        P1(2:end-1) = 2 * P1(2:end-1);
+
+        d = sqrt(sum((P1 - baseline).^2));
+        distHistory(end+1) = d; %#ok<AGROW>
+
+        set(hTime,     'YData', double(block));
+        set(hFFT,      'YData', P1);
+        set(hDist,     'XData', 1:length(distHistory), 'YData', distHistory);
+        set(hDistText, 'String', sprintf('Distance: %.2f', d));
+        set(hBlockText,'String', sprintf('Block: %d', blockCount));
+
+        if d > THRESHOLD
+            if state ~= 4
+                fprintf('[ALARM] Block %d: distance = %.2f (threshold = %g)\n', blockCount, d, THRESHOLD);
+                writeline(s, 'ALARM_ON');
+            end
+            state = 4;
+        else
+            if state == 4
+                fprintf('[OK]    Block %d: distance = %.2f - back to normal\n', blockCount, d);
+                writeline(s, 'ALARM_OFF');
+            end
+            state = 3;
+        end
+        updateStatus(hStatus, state);
+    end
+
+    drawnow limitrate;
+    pause(0.02);
+end
+
+fprintf('Session ended.\n');
+
+% =========================================================================
+% HELPERS
+% =========================================================================
 function updateStatus(hText, state)
-% Update the status text box colour and label based on current state.
     switch state
-        case 1
-            set(hText, 'String', 'STATE: IDLE',        'Color', [0.4 0.4 0.4]);
-        case 2
-            set(hText, 'String', 'STATE: CALIBRATION', 'Color', [0.1 0.5 0.9]);
-        case 3
-            set(hText, 'String', 'STATE: MONITORING',  'Color', [0.1 0.7 0.2]);
-        case 4
-            set(hText, 'String', 'STATE: ALARM',        'Color', [0.9 0.1 0.1]);
+        case 1; set(hText,'String','STATE: IDLE',        'Color',[0.4 0.4 0.4]);
+        case 2; set(hText,'String','STATE: CALIBRATION', 'Color',[0.1 0.5 0.9]);
+        case 3; set(hText,'String','STATE: MONITORING',  'Color',[0.1 0.7 0.2]);
+        case 4; set(hText,'String','STATE: ALARM',        'Color',[0.9 0.1 0.1]);
     end
 end
