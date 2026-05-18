@@ -1,41 +1,92 @@
-#include "stm32l4xx_hal.h"
-#include "board_support.h"
-#include "serial_vcp.h"
-#include "accelerometer_module.h"
-#include "data_logger.h"
+#include <cstdio>
+#include <stdint.h>
 
-UART_HandleTypeDef huart1;
+#include "board_support.h"
+#include "i2c_ttgo.h"
+#include "serial_vcp.h"
+
+static void ReportError(SerialVCP& serial, const char* message);
+static void ReportI2CError(SerialVCP& serial, uint32_t error);
+static void ErrorLoop(SerialVCP& serial, const char* message);
 
 int main(void)
 {
-    Board_HAL_Init();
-    Board_Led_Init();
+    Board_Setup();
 
-    if (!SerialVCP_Init(&huart1))
-        while (1) {}
+    SerialVCP pc_serial;
+    I2CTTGO ttgo_i2c;
 
-    if (Accelerometer_Init() != ACCEL_OK)
+    if (!pc_serial.Init())
     {
-        while (1) {}
+        ErrorLoop(pc_serial, "ST-LINK VCP init failed");
     }
 
-    DataLogger_PrintHeader(&huart1);
+    pc_serial.Write("\r\nSTM32 booted\r\n");
 
-    uint32_t next = HAL_GetTick();
+    if (!ttgo_i2c.Init())
+    {
+        ErrorLoop(pc_serial, "TTGO I2C init failed");
+    }
+
+    pc_serial.Write("TTGO I2C test started\r\n");
+    pc_serial.Write("Sending state 1 once per second\r\n");
+
+            uint8_t value = 1;
+
 
     while (1)
     {
-        next += 1;   // sample every 1 ms = ~1000 Hz
 
-        AccelerometerSampleMg sample;
+        value++;
 
-        if (Accelerometer_ReadMg(&sample) == ACCEL_OK)
+
+        if(value==4) value=0;
+        if (ttgo_i2c.SendState(value))
         {
-            DataLogger_LogSample(&huart1, &sample);
+            pc_serial.Write("TTGO send OK\r\n");
+        }
+        else
+        {
+            ReportI2CError(pc_serial, ttgo_i2c.GetLastError());
         }
 
-        while ((int32_t)(HAL_GetTick() - next) < 0) {}
+        HAL_Delay(1000);
+    }
+}
 
-        Board_Led_Toggle();
+static void ReportI2CError(SerialVCP& serial, uint32_t error)
+{
+    char message[64] = {};
+    std::snprintf(message,
+                  sizeof(message),
+                  "ERROR,TTGO I2C send failed,0x%08lX\r\n",
+                  static_cast<unsigned long>(error));
+    serial.Write(message);
+
+    if ((error & HAL_I2C_ERROR_AF) != 0U)
+    {
+        serial.Write("ERROR,No ACK from TTGO; check address, wiring, and TTGO SDA/SCL pins\r\n");
+    }
+}
+
+static void ReportError(SerialVCP& serial, const char* message)
+{
+    if (!serial.IsReady())
+    {
+        return;
+    }
+
+    serial.Write("ERROR,");
+    serial.Write(message);
+    serial.Write("\r\n");
+}
+
+static void ErrorLoop(SerialVCP& serial, const char* message)
+{
+    ReportError(serial, message);
+
+    while (1)
+    {
+        HAL_Delay(100);
     }
 }

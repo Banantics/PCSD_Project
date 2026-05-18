@@ -1,57 +1,47 @@
 #include "serial_vcp.h"
-#include <stdarg.h>
-#include <stdio.h>
-#include <string.h>
 
-bool SerialVCP_Init(UART_HandleTypeDef* huart)
+#include <cstring>
+
+bool SerialVCP::Init()
 {
-    if (!huart) return false;
-
     __HAL_RCC_USART1_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
 
-    // USART1 on PB6(TX)/PB7(RX) -> ST-LINK VCP
-    GPIO_InitTypeDef g = {0};
-    g.Pin = GPIO_PIN_6 | GPIO_PIN_7;
-    g.Mode = GPIO_MODE_AF_PP;
-    g.Pull = GPIO_PULLUP;
-    g.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    g.Alternate = GPIO_AF7_USART1;
-    HAL_GPIO_Init(GPIOB, &g);
+    GPIO_InitTypeDef gpio = {0};
+    gpio.Pin = GPIO_PIN_6 | GPIO_PIN_7;
+    gpio.Mode = GPIO_MODE_AF_PP;
+    gpio.Pull = GPIO_PULLUP;
+    gpio.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    gpio.Alternate = GPIO_AF7_USART1;
+    HAL_GPIO_Init(GPIOB, &gpio);
 
-    huart->Instance = USART1;
-    huart->Init.BaudRate = 115200;
-    huart->Init.WordLength = UART_WORDLENGTH_8B;
-    huart->Init.StopBits = UART_STOPBITS_1;
-    huart->Init.Parity = UART_PARITY_NONE;
-    huart->Init.Mode = UART_MODE_TX_RX;
-    huart->Init.HwFlowCtl = UART_HWCONTROL_NONE;
-    huart->Init.OverSampling = UART_OVERSAMPLING_16;
+    uart_.Instance = USART1;
+    uart_.Init.BaudRate = 115200;
+    uart_.Init.WordLength = UART_WORDLENGTH_8B;
+    uart_.Init.StopBits = UART_STOPBITS_1;
+    uart_.Init.Parity = UART_PARITY_NONE;
+    uart_.Init.Mode = UART_MODE_TX_RX;
+    uart_.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    uart_.Init.OverSampling = UART_OVERSAMPLING_16;
 
-    return (HAL_UART_Init(huart) == HAL_OK);
+    ready_ = (HAL_UART_Init(&uart_) == HAL_OK);
+    return ready_;
 }
 
-void SerialVCP_Write(UART_HandleTypeDef* huart, const char* text)
+bool SerialVCP::IsReady() const
 {
-    if (!huart || !text) return;
-    HAL_UART_Transmit(huart, (uint8_t*)text, (uint16_t)strlen(text), 200);
+    return ready_;
 }
 
-void SerialVCP_Printf(UART_HandleTypeDef* huart, const char* fmt, ...)
+void SerialVCP::Write(const char* text)
 {
-    if (!huart || !fmt) return;
+    if (!ready_ || (text == nullptr))
+    {
+        return;
+    }
 
-    char buffer[160];
-
-    va_list args;
-    va_start(args, fmt);
-    int n = vsnprintf(buffer, sizeof(buffer), fmt, args);
-    va_end(args);
-
-    if (n <= 0) return;
-
-    if (n >= (int)sizeof(buffer))
-        n = (int)sizeof(buffer) - 1;
-
-    HAL_UART_Transmit(huart, (uint8_t*)buffer, (uint16_t)n, 200);
+    HAL_UART_Transmit(&uart_, 
+        (uint8_t*)text, 
+        (uint16_t)std::strlen(text), 
+        200);
 }

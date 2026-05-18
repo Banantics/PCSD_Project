@@ -1,19 +1,23 @@
 #pragma once
 
-#include "stm32l4xx_hal.h"
+#include <stdint.h>
+
 #include "accelerometer_module.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+class SerialVCP;
 
-// Sends the CSV header row over UART.
-void DataLogger_PrintHeader(UART_HandleTypeDef* huart);
+class DataLogger
+{
+public:
+    DataLogger(SerialVCP& serial);
 
-// Sends one accelerometer sample as a CSV line.
-void DataLogger_LogSample(UART_HandleTypeDef* huart,
-                          const AccelerometerSampleMg* sample);
+    void PrintHeader();
+    void LogSample(uint32_t time_ms, const AccelerometerSample& sample);
+    void LogBuffer(uint32_t start_time_ms,
+                   const AccelerometerSample* samples,
+                   uint16_t count,
+                   uint32_t sample_period_ms);
 
-#ifdef __cplusplus
-}
-#endif
+private:
+    SerialVCP& serial_;
+};

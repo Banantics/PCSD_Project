@@ -1,85 +1,100 @@
 #include "board_support.h"
 
-// PA5 = Arduino D13 / LED1 on B-L475E-IOT01A
-static constexpr uint16_t LED_PIN = GPIO_PIN_5;
-static GPIO_TypeDef* LED_PORT = GPIOA;
+#include "stm32l4xx_hal.h"
 
-void Board_HAL_Init(void)
+static TIM_HandleTypeDef g_sample_timer = {};
+static volatile bool g_sample_timer_tick = false;
+
+void Board_Setup(void)
 {
     HAL_Init();
     Board_SystemClock_Config();
-    Board_Led_Init();
 }
 
-// Keep SysTick handler here so main stays clean.
+bool SampleTimer_Start1ms(void)
+{
+    __HAL_RCC_TIM7_CLK_ENABLE();
+
+    g_sample_timer_tick = false;
+    g_sample_timer.Instance = TIM7;
+    g_sample_timer.Init.Prescaler = 2000U - 1U; // 2 kHz timer clock from 4 MHz MSI
+    g_sample_timer.Init.CounterMode = TIM_COUNTERMODE_UP;
+    g_sample_timer.Init.Period = 2U - 1U; // 1 ms update period; HAL does not support ARR = 0
+    g_sample_timer.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+    g_sample_timer.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+
+    if (HAL_TIM_Base_Init(&g_sample_timer) != HAL_OK)
+    {
+        return false;
+    }
+
+    HAL_NVIC_SetPriority(TIM7_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(TIM7_IRQn);
+
+    __HAL_TIM_CLEAR_FLAG(&g_sample_timer, TIM_FLAG_UPDATE);
+    return HAL_TIM_Base_Start_IT(&g_sample_timer) == HAL_OK;
+}
+
+bool SampleTimer_TakeTick(void)
+{
+    const uint32_t old_primask = __get_PRIMASK();
+    __disable_irq();
+
+    const bool tick_happened = g_sample_timer_tick;
+    g_sample_timer_tick = false;
+
+    if (old_primask == 0U)
+    {
+        __enable_irq();
+    }
+
+    return tick_happened;
+}
+
 extern "C" void SysTick_Handler(void)
 {
     HAL_IncTick();
 }
 
-void Board_Led_Init(void)
+extern "C" void TIM7_IRQHandler(void)
 {
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-
-    GPIO_InitTypeDef g = {0};
-    g.Pin = LED_PIN;
-    g.Mode = GPIO_MODE_OUTPUT_PP;
-    g.Pull = GPIO_NOPULL;
-    g.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(LED_PORT, &g);
-
-    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
+    HAL_TIM_IRQHandler(&g_sample_timer);
 }
 
-void Board_Led_Toggle(void)
+extern "C" void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim)
 {
-    HAL_GPIO_TogglePin(LED_PORT, LED_PIN);
+    if (htim == &g_sample_timer)
+    {
+        // Keep the interrupt simple: only set a flag.
+        g_sample_timer_tick = true;
+    }
 }
-
-void Board_Led_On(void)
-{
-    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_SET);
-}
-
-void Board_Led_Off(void)
-{
-    HAL_GPIO_WritePin(LED_PORT, LED_PIN, GPIO_PIN_RESET);
-}
-
 
 void Board_SystemClock_Config(void)
 {
     RCC_OscInitTypeDef osc = {0};
     RCC_ClkInitTypeDef clk = {0};
 
-    __HAL_RCC_PWR_CLK_ENABLE();
-    HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1);
-
-    osc.OscillatorType = RCC_OSCILLATORTYPE_MSI;
+    osc.OscillatorType = RCC_OSCILLATORTYPE_MSI; // 0x00000010U
     osc.MSIState = RCC_MSI_ON;
-    osc.MSIClockRange = RCC_MSIRANGE_6; // 4 MHz source for PLL
-    osc.MSICalibrationValue = RCC_MSICALIBRATION_DEFAULT;
-
-    osc.PLL.PLLState = RCC_PLL_ON;
-    osc.PLL.PLLSource = RCC_PLLSOURCE_MSI;
-    osc.PLL.PLLM = 1;
-    osc.PLL.PLLN = 40;
-    osc.PLL.PLLP = RCC_PLLP_DIV7;
-    osc.PLL.PLLQ = RCC_PLLQ_DIV2;
-    osc.PLL.PLLR = RCC_PLLR_DIV2;
+    osc.MSICalibrationValue = 0;
+    osc.MSIClockRange = RCC_MSIRANGE_6; // pg 226
+    osc.PLL.PLLState = RCC_PLL_OFF;
 
     if (HAL_RCC_OscConfig(&osc) != HAL_OK)
+    {
         while (1) {}
+    }
 
     clk.ClockType = RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_HCLK |
-                    RCC_CLOCKTYPE_PCLK1  | RCC_CLOCKTYPE_PCLK2;
-    clk.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+                    RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
+    clk.SYSCLKSource = RCC_SYSCLKSOURCE_MSI;
     clk.AHBCLKDivider = RCC_SYSCLK_DIV1;
     clk.APB1CLKDivider = RCC_HCLK_DIV1;
     clk.APB2CLKDivider = RCC_HCLK_DIV1;
 
-    if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_4) != HAL_OK)
+    if (HAL_RCC_ClockConfig(&clk, FLASH_LATENCY_0) != HAL_OK)
+    {
         while (1) {}
-
-    HAL_RCCEx_EnableMSIPLLMode();
+    }
 }
